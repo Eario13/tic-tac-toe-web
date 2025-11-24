@@ -1,145 +1,107 @@
-const DB_NAME = 'TicTacToeDB';
+const DB_NAME = 'TicTacToeDB_Task07';
 const DB_VERSION = 1;
-const GAMES_STORE = 'games';
-const MOVES_STORE = 'moves';
-let db;
+const STORES = {
+    GAMES: 'games',
+    MOVES: 'moves'
+};
 
-function initDB() {
+let db = null;
+
+export function initDB() {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-        request.onerror = (event) => {
-            console.error('Database error:', event.target.error);
-            reject('Database error');
-        };
-
-        request.onupgradeneeded = (event) => {
-            const db = event.target.result;
-
-            if (!db.objectStoreNames.contains(GAMES_STORE)) {
-                const gamesStore = db.createObjectStore(GAMES_STORE, { keyPath: 'id', autoIncrement: true });
-                gamesStore.createIndex('startTime', 'startTime', { unique: false });
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(STORES.GAMES)) {
+                db.createObjectStore(STORES.GAMES, { keyPath: 'id', autoIncrement: true });
             }
-            if (!db.objectStoreNames.contains(MOVES_STORE)) {
-                const movesStore = db.createObjectStore(MOVES_STORE, { keyPath: 'id', autoIncrement: true });
+            if (!db.objectStoreNames.contains(STORES.MOVES)) {
+                const movesStore = db.createObjectStore(STORES.MOVES, { keyPath: 'id', autoIncrement: true });
                 movesStore.createIndex('gameId', 'gameId', { unique: false });
             }
         };
 
-        request.onsuccess = (event) => {
-            db = event.target.result;
-            console.log('Database opened successfully.');
+        request.onsuccess = (e) => {
+            db = e.target.result;
+            console.log('DB Initialized');
             resolve(db);
         };
+
+        request.onerror = (e) => reject(e.target.error);
     });
 }
 
-async function createGame(boardSize, playerXName, playerOName) {
+// Создание новой записи об игре
+export async function createGameInDB(boardSize, playerX, playerO) {
     return new Promise((resolve, reject) => {
-        const transaction = db.transaction([GAMES_STORE], 'readwrite');
-        const store = transaction.objectStore(GAMES_STORE);
+        const tx = db.transaction([STORES.GAMES], 'readwrite');
+        const store = tx.objectStore(STORES.GAMES);
         const game = {
-            board_size: boardSize,
-            player_x_name: playerXName,
-            player_o_name: playerOName,
-            start_time: new Date(),
+            boardSize,
+            playerX,
+            playerO,
+            startTime: new Date(),
             winner: null,
-            draw: false,
+            isDraw: false
         };
-
-        const request = store.add(game);
-
-        request.onsuccess = (event) => {
-            resolve(event.target.result); // Возвращает ID новой игры
-        };
-
-        request.onerror = (event) => {
-            console.error('Error creating game:', event.target.error);
-            reject('Error creating game');
-        };
+        const req = store.add(game);
+        req.onsuccess = (e) => resolve(e.target.result); // Возвращает ID
+        req.onerror = () => reject('Error creating game');
     });
 }
 
-async function recordMove(gameId, playerSymbol, row, col, moveNumber) {
+// Запись хода
+export async function saveMoveToDB(gameId, symbol, row, col, moveNumber) {
     return new Promise((resolve, reject) => {
-        const transaction = db.transaction([MOVES_STORE], 'readwrite');
-        const store = transaction.objectStore(MOVES_STORE);
-        const move = {
-            gameId,
-            player_symbol: playerSymbol,
-            row,
-            col,
-            move_number: moveNumber,
-        };
-        const request = store.add(move);
-        request.onsuccess = resolve;
-        request.onerror = reject;
+        const tx = db.transaction([STORES.MOVES], 'readwrite');
+        const store = tx.objectStore(STORES.MOVES);
+        const move = { gameId, symbol, row, col, moveNumber };
+        store.add(move).onsuccess = resolve;
+        store.onerror = reject;
     });
 }
 
-async function endGame(gameId, winnerSymbol, isDraw) {
+// Обновление результата игры
+export async function finalizeGameInDB(gameId, winner, isDraw) {
     return new Promise((resolve, reject) => {
-        const transaction = db.transaction([GAMES_STORE], 'readwrite');
-        const store = transaction.objectStore(GAMES_STORE);
-        const getRequest = store.get(gameId);
-
-        getRequest.onsuccess = (event) => {
-            const game = event.target.result;
-            if (game) {
-                game.end_time = new Date();
-                game.winner = winnerSymbol;
-                game.draw = isDraw;
-
-                const updateRequest = store.put(game);
-                updateRequest.onsuccess = resolve;
-                updateRequest.onerror = reject;
+        const tx = db.transaction([STORES.GAMES], 'readwrite');
+        const store = tx.objectStore(STORES.GAMES);
+        
+        store.get(gameId).onsuccess = (e) => {
+            const data = e.target.result;
+            if (data) {
+                data.winner = winner;
+                data.isDraw = isDraw;
+                data.endTime = new Date();
+                store.put(data).onsuccess = resolve;
             } else {
                 reject('Game not found');
             }
         };
-        getRequest.onerror = reject;
     });
 }
 
-async function getAllGames() {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([GAMES_STORE], 'readonly');
-        const store = transaction.objectStore(GAMES_STORE);
-        const request = store.getAll();
-
-        request.onsuccess = () => {
-            // Сортируем по дате начала (от новых к старым)
-            resolve(request.result.sort((a, b) => b.start_time - a.start_time));
+// Получение списка игр
+export async function getGamesList() {
+    return new Promise((resolve) => {
+        const tx = db.transaction([STORES.GAMES], 'readonly');
+        const store = tx.objectStore(STORES.GAMES);
+        store.getAll().onsuccess = (e) => {
+            // Сортировка: новые сверху
+            resolve(e.target.result.sort((a, b) => b.startTime - a.startTime));
         };
-        request.onerror = reject;
     });
 }
 
-async function getGameDetails(gameId) {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([GAMES_STORE], 'readonly');
-        const store = transaction.objectStore(GAMES_STORE);
-        const request = store.get(gameId);
-
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = reject;
-    });
-}
-
-async function getGameMoves(gameId) {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([MOVES_STORE], 'readonly');
-        const store = transaction.objectStore(MOVES_STORE);
+// Получение ходов конкретной игры
+export async function getGameMoves(gameId) {
+    return new Promise((resolve) => {
+        const tx = db.transaction([STORES.MOVES], 'readonly');
+        const store = tx.objectStore(STORES.MOVES);
         const index = store.index('gameId');
-        const request = index.getAll(gameId);
-
-        request.onsuccess = () => {
-            // Сортируем по номеру хода
-            resolve(request.result.sort((a, b) => a.move_number - b.move_number));
+        index.getAll(gameId).onsuccess = (e) => {
+            resolve(e.target.result.sort((a, b) => a.moveNumber - b.moveNumber));
         };
-        request.onerror = reject;
     });
 }
-
-// Экспортируем функции для использования в других модулях
-export { initDB, createGame, recordMove, endGame, getAllGames, getGameDetails, getGameMoves };

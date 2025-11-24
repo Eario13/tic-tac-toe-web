@@ -1,194 +1,197 @@
 import Game from './game.js';
-import Board from './board.js';
 import * as db from './db.js';
+import Board from './board.js'; // Используем для отрисовки при реплее
 
-// --- DOM элементы ---
-const newGameBtn = document.getElementById('new-game-btn');
-const listGamesBtn = document.getElementById('list-games-btn');
-const boardSizeSelect = document.getElementById('board-size');
-const playerNameInput = document.getElementById('player-name');
-const gameBoardDiv = document.getElementById('game-board');
-const statusText = document.getElementById('status-text');
-const gamesListDiv = document.getElementById('games-list');
-
-let currentGame = null;
-let isReplaying = false; // Флаг для отслеживания состояния повтора
-
-// --- UI Управление ---
-const UI = {
-    renderBoard(board) {
-        gameBoardDiv.innerHTML = '';
-        const size = board.getSize();
-        gameBoardDiv.style.gridTemplateColumns = `repeat(${size}, 50px)`;
-        
-        for (let row = 0; row < size; row++) {
-            for (let col = 0; col < size; col++) {
-                const cell = document.createElement('div');
-                cell.classList.add('cell');
-                const symbol = board.getCell(row, col);
-                if (symbol !== ' ') {
-                    cell.textContent = symbol;
-                    cell.classList.add(symbol.toLowerCase());
-                }
-                cell.dataset.row = row;
-                cell.dataset.col = col;
-                gameBoardDiv.appendChild(cell);
-            }
-        }
-    },
-    updateStatus(message) {
-        statusText.textContent = message;
-    },
-    async displayGamesList() {
-        const games = await db.getAllGames();
-        if (games.length === 0) {
-            gamesListDiv.innerHTML = '<p>Сохраненных игр нет.</p>';
-            return;
-        }
-
-        const ul = document.createElement('ul');
-        games.forEach(game => {
-            const li = document.createElement('li');
-            const winner = game.winner ? `Победитель: ${game.winner}` : (game.draw ? 'Ничья' : 'Не закончена');
-            li.textContent = `ID: ${game.id} | ${new Date(game.start_time).toLocaleString()} | ${game.player_x_name} vs ${game.player_o_name} | ${winner}`;
-            li.dataset.gameId = game.id;
-            li.addEventListener('click', () => {
-                if (!isReplaying) {
-                   replayGame(game.id);
-                }
-            });
-            ul.appendChild(li);
-        });
-        gamesListDiv.innerHTML = '';
-        gamesListDiv.appendChild(ul);
-    }
+// UI Элементы
+const els = {
+    newGameBtn: document.getElementById('new-game-btn'),
+    listBtn: document.getElementById('list-games-btn'),
+    boardSize: document.getElementById('board-size'),
+    playerName: document.getElementById('player-name'),
+    board: document.getElementById('game-board'),
+    status: document.getElementById('status-text'),
+    list: document.getElementById('games-list')
 };
 
-// --- Сброс состояния и UI ---
-function resetStateAndUI() {
-    isReplaying = false;
-    newGameBtn.disabled = false;
-    listGamesBtn.disabled = false;
-    listGamesBtn.textContent = 'Показать список игр';
-    gamesListDiv.style.display = 'none';
-    UI.updateStatus('Начните новую игру или просмотрите историю.');
-    // Очищаем поле, создавая пустое поле того же размера, что выбрано в селекте
-    const currentSize = parseInt(boardSizeSelect.value, 10);
-    UI.renderBoard(new Board(currentSize));
-}
-
-// --- Обработчики событий ---
-newGameBtn.addEventListener('click', () => {
-    if (isReplaying) return;
-    
-    const boardSize = parseInt(boardSizeSelect.value, 10);
-    const playerName = playerNameInput.value || 'Игрок';
-    
-    gamesListDiv.style.display = 'none';
-    listGamesBtn.textContent = 'Показать список игр';
-    
-    currentGame = new Game(boardSize, playerName, UI);
-    const initialBoard = new Board(boardSize);
-    UI.renderBoard(initialBoard);
-    currentGame.start();
-});
-
-gameBoardDiv.addEventListener('click', (event) => {
-    if (isReplaying || !currentGame || !event.target.classList.contains('cell')) {
-        return;
-    }
-    const row = parseInt(event.target.dataset.row, 10);
-    const col = parseInt(event.target.dataset.col, 10);
-    currentGame.handleHumanMove(row, col);
-});
-
-listGamesBtn.addEventListener('click', () => {
-    // NEW: Если идет повтор, кнопка "Назад" его прерывает
-    if (isReplaying) {
-        isReplaying = false; // Устанавливаем флаг, чтобы цикл в replayGame прервался
-        // Дальнейшая очистка произойдет в блоке finally функции replayGame
-        return;
-    }
-
-    const isVisible = gamesListDiv.style.display === 'block';
-    
-    if (isVisible) {
-        gamesListDiv.style.display = 'none';
-        listGamesBtn.textContent = 'Показать список игр';
-    } else {
-        UI.displayGamesList();
-        gamesListDiv.style.display = 'block';
-        listGamesBtn.textContent = 'Назад';
-    }
-});
-
-// --- Логика повтора игры ---
-async function replayGame(gameId) {
-    isReplaying = true;
-    newGameBtn.disabled = true;
-    listGamesBtn.textContent = 'Прервать повтор'; // Меняем текст на время повтора
-    listGamesBtn.disabled = false; // Кнопка должна быть активна для прерывания
-    currentGame = null;
-
-    UI.updateStatus(`Повтор игры #${gameId}...`);
-    
-    const gameDetails = await db.getGameDetails(gameId);
-    const moves = await db.getGameMoves(gameId);
-
-    try {
-        if (!gameDetails || moves.length === 0) {
-            UI.updateStatus('Не удалось загрузить данные для повтора.');
-            return; // Выходим, блок finally все равно выполнится
-        }
-
-        const replayBoard = new Board(gameDetails.board_size);
-        UI.renderBoard(replayBoard);
-
-        for (let i = 0; i < moves.length; i++) {
-            // NEW: Проверяем флаг перед каждым ходом. Если он false, прерываем цикл.
-            if (!isReplaying) {
-                UI.updateStatus('Повтор прерван пользователем.');
-                break;
-            }
-            
-            await new Promise(resolve => setTimeout(resolve, 800));
-            
-            // NEW: Повторно проверяем флаг после задержки, на случай если нажали во время паузы
-            if (!isReplaying) {
-                UI.updateStatus('Повтор прерван пользователем.');
-                break;
-            }
-            
-            const move = moves[i];
-            replayBoard.setCell(move.row, move.col, move.player_symbol);
-            UI.renderBoard(replayBoard);
-            UI.updateStatus(`Ход ${i + 1}: ${move.player_symbol} на (${move.row + 1}, ${move.col + 1})`);
-        }
-
-        // Этот код выполнится, только если повтор не был прерван
-        if (isReplaying) {
-            const finalStatus = gameDetails.winner ? `Победил ${gameDetails.winner}!` : (gameDetails.draw ? 'Ничья!' : 'Игра не завершена.');
-            UI.updateStatus(`Повтор окончен. ${finalStatus}`);
-        }
-
-    } catch (error) {
-        console.error("Ошибка во время повтора игры:", error);
-        UI.updateStatus("Произошла ошибка во время повтора.");
-    } finally {
-        // NEW: Этот блок выполнится всегда: и после завершения, и после прерывания
-        isReplaying = false;
-        newGameBtn.disabled = false;
-        listGamesBtn.textContent = 'Назад'; // Оставляем "Назад", т.к. список игр все еще виден
-    }
-}
+let currentGame = null;
+let currentGameId = null;
+let isReplaying = false;
 
 // --- Инициализация ---
 document.addEventListener('DOMContentLoaded', async () => {
     try {
         await db.initDB();
-        UI.updateStatus('База данных готова. Начните новую игру.');
-    } catch (error) {
-        UI.updateStatus('Ошибка инициализации базы данных.');
-        console.error(error);
+        els.status.textContent = "Готов к игре. Нажмите 'Новая игра'.";
+    } catch (e) {
+        console.error(e);
+        els.status.textContent = "Ошибка БД.";
     }
 });
+
+// --- Обработчики событий ---
+els.newGameBtn.addEventListener('click', startNewGame);
+els.listBtn.addEventListener('click', toggleGamesList);
+
+// Клик по доске делегируем
+els.board.addEventListener('click', (e) => {
+    // Если идет реплей или игра не создана - игнор
+    if (isReplaying || !currentGame) return;
+    
+    // Ищем клик по клетке
+    const cell = e.target.closest('.cell');
+    if (!cell) return;
+
+    const row = parseInt(cell.dataset.r);
+    const col = parseInt(cell.dataset.c);
+    currentGame.humanMove(row, col);
+});
+
+// --- Логика Новой Игры ---
+async function startNewGame() {
+    if (isReplaying) return;
+    
+    // Сброс UI
+    els.list.style.display = 'none';
+    els.listBtn.textContent = 'Список партий (DB)';
+    
+    const size = parseInt(els.boardSize.value);
+    const pName = els.playerName.value || 'Игрок';
+
+    // Создаем визуальное поле
+    renderEmptyBoard(size);
+
+    // Инициализируем игру
+    currentGame = new Game({
+        boardSize: size,
+        playerName: pName,
+        onStatus: (msg) => els.status.textContent = msg,
+        onMove: handleMove,
+        onEnd: handleGameEnd
+    });
+
+    // Создаем запись в БД
+    // Примечание: Мы заранее не знаем, кто X, а кто O, пока игра не создастся
+    // Поэтому берем данные из экземпляра игры
+    currentGameId = await db.createGameInDB(
+        size, 
+        currentGame.players['X'].name, 
+        currentGame.players['O'].name
+    );
+
+    currentGame.start();
+}
+
+// Обработка хода (Колбэк из Game)
+function handleMove(data) {
+    // 1. Обновляем UI
+    const cell = document.querySelector(`.cell[data-r="${data.row}"][data-c="${data.col}"]`);
+    if (cell) {
+        cell.textContent = data.symbol;
+        cell.classList.add(data.symbol.toLowerCase());
+    }
+
+    // 2. Сохраняем в БД (Только если это реальная игра, а не реплей)
+    if (currentGameId && !isReplaying) {
+        db.saveMoveToDB(currentGameId, data.symbol, data.row, data.col, data.moveNum);
+    }
+}
+
+// Обработка конца игры (Колбэк из Game)
+function handleGameEnd(result) {
+    const msg = result.isDraw ? "Ничья!" : `Победитель: ${result.winnerName}!`;
+    els.status.textContent = `Игра окончена. ${msg}`;
+    
+    if (currentGameId && !isReplaying) {
+        db.finalizeGameInDB(currentGameId, result.winnerName, result.isDraw);
+    }
+    currentGame = null;
+    currentGameId = null;
+}
+
+// --- Отрисовка ---
+function renderEmptyBoard(size) {
+    els.board.innerHTML = '';
+    els.board.style.gridTemplateColumns = `repeat(${size}, 50px)`;
+    
+    for (let r = 0; r < size; r++) {
+        for (let c = 0; c < size; c++) {
+            const div = document.createElement('div');
+            div.className = 'cell';
+            div.dataset.r = r;
+            div.dataset.c = c;
+            els.board.appendChild(div);
+        }
+    }
+}
+
+// --- Список игр и Реплей ---
+async function toggleGamesList() {
+    if (isReplaying) {
+        // Если идет реплей, кнопка работает как "Стоп"
+        isReplaying = false;
+        return;
+    }
+
+    if (els.list.style.display === 'block') {
+        els.list.style.display = 'none';
+        els.listBtn.textContent = 'Список партий (DB)';
+    } else {
+        const games = await db.getGamesList();
+        renderGamesList(games);
+        els.list.style.display = 'block';
+        els.listBtn.textContent = 'Скрыть список';
+    }
+}
+
+function renderGamesList(games) {
+    els.list.innerHTML = '';
+    if (games.length === 0) {
+        els.list.innerHTML = '<div style="padding:10px;">Нет сохраненных игр.</div>';
+        return;
+    }
+
+    games.forEach(g => {
+        const div = document.createElement('div');
+        div.className = 'game-record';
+        const dateStr = new Date(g.startTime).toLocaleString();
+        const res = g.winner ? `Победил ${g.winner}` : (g.isDraw ? 'Ничья' : 'Не закончена');
+        div.textContent = `[ID:${g.id}] ${dateStr} - ${g.boardSize}x${g.boardSize} - ${res}`;
+        
+        div.onclick = () => startReplay(g);
+        els.list.appendChild(div);
+    });
+}
+
+async function startReplay(gameData) {
+    isReplaying = true;
+    currentGame = null; // Отключаем логику текущей игры
+    els.list.style.display = 'none';
+    els.listBtn.textContent = 'Остановить просмотр';
+    els.newGameBtn.disabled = true;
+    
+    els.status.textContent = `Воспроизведение игры #${gameData.id}...`;
+    renderEmptyBoard(gameData.boardSize);
+
+    const moves = await db.getGameMoves(gameData.id);
+
+    try {
+        for (let move of moves) {
+            if (!isReplaying) break; // Проверка флага прерывания
+            
+            await new Promise(r => setTimeout(r, 800)); // Задержка
+            
+            if (!isReplaying) break; // Повторная проверка
+
+            const cell = document.querySelector(`.cell[data-r="${move.row}"][data-c="${move.col}"]`);
+            if (cell) {
+                cell.textContent = move.symbol;
+                cell.classList.add(move.symbol.toLowerCase());
+            }
+        }
+        if(isReplaying) els.status.textContent = "Воспроизведение завершено.";
+    } finally {
+        isReplaying = false;
+        els.newGameBtn.disabled = false;
+        els.listBtn.textContent = 'Список партий (DB)';
+    }
+}

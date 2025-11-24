@@ -1,51 +1,39 @@
 export default class Board {
     constructor(size) {
         this.size = size;
-        this.board = Array(size).fill(null).map(() => Array(size).fill(' '));
+        this.grid = Array.from({ length: size }, () => Array(size).fill(null));
     }
 
-    getSize() {
-        return this.size;
-    }
+    getSize() { return this.size; }
 
-    getCell(row, col) {
-        return this.board[row][col];
-    }
+    getCell(row, col) { return this.grid[row][col]; }
 
-    setCell(row, col, player) {
+    makeMove(row, col, symbol) {
         if (this.isValidMove(row, col)) {
-            this.board[row][col] = player;
+            this.grid[row][col] = symbol;
             return true;
         }
         return false;
     }
 
     isValidMove(row, col) {
-        return row >= 0 && row < this.size &&
-               col >= 0 && col < this.size &&
-               this.board[row][col] === ' ';
+        return row >= 0 && row < this.size && col >= 0 && col < this.size && this.grid[row][col] === null;
     }
 
     isFull() {
-        return this.board.every(row => row.every(cell => cell !== ' '));
+        return this.grid.every(row => row.every(cell => cell !== null));
     }
 
-    checkWin(player) {
-        // Проверка строк
-        for (let i = 0; i < this.size; i++) {
-            if (this.board[i].every(cell => cell === player)) return true;
+    checkWin(symbol) {
+        const s = this.size;
+        // Строки и столбцы
+        for (let i = 0; i < s; i++) {
+            if (this.grid[i].every(c => c === symbol)) return true;
+            if (this.grid.map(r => r[i]).every(c => c === symbol)) return true;
         }
-
-        // Проверка столбцов
-        for (let j = 0; j < this.size; j++) {
-            if (this.board.every(row => row[j] === player)) return true;
-        }
-
-        // Проверка главной диагонали
-        if (this.board.every((row, i) => row[i] === player)) return true;
-
-        // Проверка побочной диагонали
-        if (this.board.every((row, i) => row[this.size - 1 - i] === player)) return true;
+        // Диагонали
+        if (this.grid.every((r, i) => r[i] === symbol)) return true;
+        if (this.grid.every((r, i) => r[s - 1 - i] === symbol)) return true;
 
         return false;
     }
